@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Keychain.Utils where
 
 import Data.ByteArray (ByteArrayAccess)
@@ -22,6 +23,11 @@ textTo = fromString . T.unpack
 
 toB16 :: ByteString -> Text
 toB16 = T.decodeUtf8 . B16.encode
+
+fromB16 :: Text -> Maybe ByteString
+fromB16 txt = case B16.decode $ T.encodeUtf8 txt of
+  (res, "") -> Just res
+  _ -> Nothing
 
 readNatural :: String -> Maybe Natural
 readNatural = readMaybe

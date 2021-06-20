@@ -1,13 +1,11 @@
 module Keychain.Keygen
-  ( PublicKey(..)
-  , pubKeyToText
-  , mnemonicToRoot
+  ( mnemonicToRoot
   , genMnemonic12
   , generateCryptoPairFromRoot
   , mkPhraseMapFromMnemonic
   , KeyIndex(..)
-  , EncryptedPrivateKey
-  , encryptedPrivateKeyToText
+  , MnemonicPhrase
+  , mkMnemonicPhrase
   ) where
 
 import qualified Cardano.Crypto.Wallet as Crypto
@@ -24,9 +22,10 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import GHC.Natural
 import Data.Word (Word32)
+import Keychain.KeyPair
 import Keychain.Utils
 
-mnemonicToRoot :: [Text] -> Crypto.XPrv
+mnemonicToRoot :: MnemonicPhrase -> Crypto.XPrv
 mnemonicToRoot phrase = seedToRoot (phraseToSeed phrase) "" -- TODO: Empty passowrd
 
 genMnemonic12 :: MonadIO m => m (Either Text (Crypto.MnemonicSentence 12))
@@ -50,16 +49,13 @@ mkPhraseMapFromMnemonic
 mkPhraseMapFromMnemonic = wordsToPhraseMap . T.words . baToText
   . Crypto.mnemonicSentenceToString @mw Crypto.english
 
-newtype PublicKey = PublicKey ByteString
+newtype MnemonicPhrase = MnemonicPhrase [ Text ]
   deriving (Show, Eq)
 
-newtype EncryptedPrivateKey = EncryptedPrivateKey Crypto.XPrv
-
-pubKeyToText :: PublicKey -> Text
-pubKeyToText (PublicKey pub) = toB16 pub
-
-encryptedPrivateKeyToText :: EncryptedPrivateKey -> Text
-encryptedPrivateKeyToText (EncryptedPrivateKey xprv) = toB16 $ Crypto.unXPrv xprv
+mkMnemonicPhrase :: [Text] -> Maybe MnemonicPhrase
+mkMnemonicPhrase lst
+  | length lst == 12 = Just $ MnemonicPhrase lst
+  | otherwise = Nothing
 
 -- TODO: Don't expose constructor; only create with 'mkKeyIndex'
 newtype KeyIndex = KeyIndex { unKeyIndex :: Natural }
@@ -68,16 +64,14 @@ newtype KeyIndex = KeyIndex { unKeyIndex :: Natural }
 fromKeyIndex :: KeyIndex -> Word32
 fromKeyIndex = fromIntegral . naturalToInt . unKeyIndex
 
---------------------------------------------------
-
 -- genMnemonic24 :: MonadIO m => m (Either Text (Crypto.MnemonicSentence 24))
 -- genMnemonic24 = liftIO $ bimap tshow Crypto.entropyToWords . Crypto.toEntropy @256
 --   -- This size must be a 1/8th the size of the 'toEntropy' size: 256 / 8 = 32
 --   <$> Crypto.Random.Entropy.getEntropy @ByteString 32
 
 -- for recovery
-phraseToSeed :: [ Text ] -> Crypto.Seed
-phraseToSeed lst =
+phraseToSeed :: MnemonicPhrase -> Crypto.Seed
+phraseToSeed (MnemonicPhrase lst) =
   let phraseMap = wordsToPhraseMap lst
       Right phrase = Crypto.mnemonicPhrase @12 $ textTo <$> Map.elems phraseMap
       Right sentence = Crypto.mnemonicPhraseToMnemonicSentence Crypto.english phrase
