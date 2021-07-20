@@ -52,7 +52,6 @@ library
  exposed-modules:
                   Keychain.Keygen
                   Keychain.KeyPair
-                  Keychain.KeyStorage
                   Keychain.Utils
 
 executable keychain
