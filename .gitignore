@@ -1,4 +1,8 @@
+dist
 dist-newstyle/*
+*.swp
+*.o
+*.hi
 
 result
 

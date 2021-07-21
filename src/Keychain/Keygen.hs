@@ -6,6 +6,7 @@ module Keychain.Keygen
   , KeyIndex(..)
   , MnemonicPhrase
   , mkMnemonicPhrase
+  , readPhraseFromFile
   ) where
 
 import qualified Cardano.Crypto.Wallet as Crypto
@@ -20,6 +21,7 @@ import qualified Data.Map as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.IO as T
 import GHC.Natural
 import Data.Word (Word32)
 import Keychain.KeyPair
@@ -52,14 +54,18 @@ mkPhraseMapFromMnemonic = wordsToPhraseMap . T.words . baToText
 newtype MnemonicPhrase = MnemonicPhrase [ Text ]
   deriving (Show, Eq)
 
+-- TODO Allow 24-word phrases
 mkMnemonicPhrase :: [Text] -> Maybe MnemonicPhrase
 mkMnemonicPhrase lst
   | length lst == 12 = Just $ MnemonicPhrase lst
   | otherwise = Nothing
 
+readPhraseFromFile :: FilePath -> IO (Maybe MnemonicPhrase)
+readPhraseFromFile keyfile = mkMnemonicPhrase . T.words . T.strip <$> T.readFile keyfile
+
 -- TODO: Don't expose constructor; only create with 'mkKeyIndex'
 newtype KeyIndex = KeyIndex { unKeyIndex :: Natural }
-  deriving (Show, Eq)
+  deriving (Eq, Ord, Show, Read, Num, Enum)
 
 fromKeyIndex :: KeyIndex -> Word32
 fromKeyIndex = fromIntegral . naturalToInt . unKeyIndex
