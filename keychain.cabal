@@ -28,7 +28,7 @@ common basic-project
                         GeneralizedNewtypeDeriving
 
 
-  ghc-options:          -Wall -Wunused-packages
+  ghc-options:          -Wall -Wunused-packages -optl-static -optl-pthread
 
 
 library
