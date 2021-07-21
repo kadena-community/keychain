@@ -41,7 +41,8 @@ Available commands:
 
 If you don't want to trust this program's key generation, you can use [the
 included recovery phrase word list file](bip39-hex-dice.txt) to generate your
-own recovery phrase from throwing 16-sided hexadecimal dice.  This notation
+own recovery phrase from throwing 16-sided hexadecimal dice.  (You can buy hex
+dice [here](https://www.mathartfun.com/d141518.html).)  This notation
 
 ```
 0/8 1c adjust
