@@ -13,7 +13,7 @@ All you need to do is put your recovery phrase in a text file with spaces
 separating each word and then run the following command:
 
 ```
-echo <request-key> | ./keychain sign recovery-phrase.txt 0
+echo <request-key> | keychain sign recovery-phrase.txt 0
 ```
 
 The zero at the end is the index of the keys. 0 will give you the first key
@@ -40,7 +40,7 @@ Available commands:
 ## Secure Recovery Phrase Generation
 
 If you don't want to trust this program's key generation, you can use [the
-included recovery phrase word list file](bip39-hex-dice.txt] to generate your
+included recovery phrase word list file](bip39-hex-dice.txt) to generate your
 own recovery phrase from throwing 16-sided hexadecimal dice.  This notation
 
 ```
