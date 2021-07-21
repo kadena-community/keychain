@@ -67,6 +67,8 @@ jobs:
     # Upload artifacts
     - name: Copy build artifact
       run: cp `cabal list-bin exe:keychain` .
+    - name: Display linked libraries
+      run: ldd keychain
     - name: Stripping binary
       run: strip keychain
     - uses: actions/upload-artifact@v2
