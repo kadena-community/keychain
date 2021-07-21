@@ -28,19 +28,23 @@ in pkgs.haskell.packages.${compiler}.developPackage {
   name = "keychain";
   root = gitignoreSrc.gitignoreSource ./.;
 
-  overrides = self: super: {
+  overrides = self: super: with pkgs.haskell.lib; {
     cardano-crypto = self.callCabal2nix "cardano-crypto" (thunkSource ./dep/cardano-crypto) {};
+    base16 = dontCheck (self.callHackageDirect {
+      pkg = "base16";
+      ver = "0.3.0.1";
+      sha256 = "1fiyp23zlac87bqrirq1b40v51b76icd9razzicx6ixldglqjqlj";
+    } {});
+    base64 = self.callHackageDirect {
+      pkg = "base64";
+      ver = "0.4.2.3";
+      sha256 = "1i4cf1xfbkxlxshwlsxgw2w5gi3hkkfm1n99vnzq7rixz8nxcw7r";
+    } {};
     some = self.callHackageDirect {
       pkg = "some";
       ver = "1.0.3";
       sha256 = "1mrraqn7pz635rjrff5ih6j9srmivm53bn8jd92qpi8ikbvlva19";
     } {};
-#    dependent-sum-template = self.callHackageDirect {
-#      pkg = "dependent-sum-template";
-#      ver = "0.1.0.0";
-#      sha256 = "0fm73cbja570lfxznv66daya5anp4b0m24jjm5fwn95f49dp9d4n";
-#      # sha256 = pkgs.lib.fakeSha256;
-#    } {};
   };
 
   modifier = drv: pkgs.haskell.lib.overrideCabal drv (attrs: {

@@ -26,11 +26,11 @@ pubKeyToText :: PublicKey -> Text
 pubKeyToText (PublicKey pub) = toB16 pub
 
 --TODO -- YUCK
-toPubKey :: Text -> Maybe PublicKey
+toPubKey :: Text -> Either Text PublicKey
 toPubKey txt = do
   bs <- fromB16 txt
   case BS.length bs /= 64 of
-    False -> Nothing
+    False -> Left "PublicKey should be 64 hex characters"
     True -> pure $ PublicKey bs
 
 encryptedPrivateKeyToText :: EncryptedPrivateKey -> Text

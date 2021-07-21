@@ -36,18 +36,19 @@ library
   hs-source-dirs:  src
   build-depends:
                    base               >= 4.12.0 && < 4.16
-                 , cardano-crypto     >= 1.1.0 && < 1.2
                  , aeson
-                 , cryptonite
-                 , base16-bytestring
+                 , base16
+                 , base64
                  , bimap
                  , bytestring
+                 , cardano-crypto     >= 1.1.0 && < 1.2
                  , containers
+                 , cryptonite
+                 , dependent-sum-template
                  , filepath
                  , memory
                  , mtl
                  , some
-                 , dependent-sum-template
                  , text
  exposed-modules:
                   Keychain.Keygen
@@ -62,10 +63,13 @@ executable keychain
   -- other-extensions:
   build-depends:
                      base
+                   , base16
+                   , base64
+                   , bytestring
+                   , cardano-crypto
+                   , containers
                    , keychain
-                   , optparse-applicative
                    , microlens
                    , microlens-th
+                   , optparse-applicative
                    , text
-                   , containers
-                   , cardano-crypto
