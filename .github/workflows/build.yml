@@ -45,7 +45,7 @@ jobs:
       run: cabal v2-build
 
     # Upload artifacts
-    - name: Build
+    - name: Copy build artifact
       run: cp `cabal list-bin exe:keychain` .
     - uses: actions/upload-artifact@v2
       with:
