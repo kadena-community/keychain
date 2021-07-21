@@ -67,14 +67,17 @@ jobs:
     # Upload artifacts
     - name: Copy build artifact
       run: cp `cabal list-bin exe:keychain` .
-    - name: Display linked libraries
-      run: ldd keychain
     - name: Stripping binary
       run: strip keychain
+    - name: Copying lib
+      if: "contains(matrix.os, 'ubuntu')"
+      run: cp /lib/x86_64-linux-gnu/libcrypto.so.1.1 .
     - uses: actions/upload-artifact@v2
       with:
         name: keychain-build-${{ matrix.os }}
-        path: keychain
+        path: |
+          keychain
+          libcrypto*
 
     # Test
     - name: Test
