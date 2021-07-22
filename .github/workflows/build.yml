@@ -71,7 +71,10 @@ jobs:
       run: strip keychain
 
     # Build statically linked binary
-    - name: Build
+    - name: Build static binary
+      if: "contains(matrix.os, 'ubuntu-18.04')"
+      run: "cabal clean"
+    - name: Build static binary
       if: "contains(matrix.os, 'ubuntu-18.04')"
       run: "cabal build --ghc-options=\"-optl-static -optl-pthread\""
 
