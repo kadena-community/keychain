@@ -64,23 +64,30 @@ jobs:
     - name: Build
       run: cabal build
 
-    # Upload artifacts
+    # Copy and strip binary
     - name: Copy build artifact
       run: cp `cabal list-bin exe:keychain` .
     - name: Stripping binary
       run: strip keychain
-    - name: Copying lib
+
+    # Build statically linked binary
+    - name: Build
       if: "contains(matrix.os, 'ubuntu-18.04')"
-      run: cp /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 .
-    - name: Copying lib
-      if: "contains(matrix.os, 'ubuntu-20.04')"
-      run: cp /lib/x86_64-linux-gnu/libcrypto.so.1.1 .
+      run: "cabal build --ghc-options=\"-optl-static -optl-pthread\""
+
+    # Copy and strip static binary
+    - name: Copying static binary
+      run: cp `cabal list-bin exe:keychain` ./keychain-static
+    - name: Stripping static binary
+      run: strip keychain-static
+
+    # Upload artifacts
     - uses: actions/upload-artifact@v2
       with:
         name: keychain-build-${{ matrix.os }}
         path: |
           keychain
-          libcrypto*
+          keychain-static
 
     # Test
     - name: Test
