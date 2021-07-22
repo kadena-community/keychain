@@ -72,10 +72,10 @@ jobs:
 
     # Build statically linked binary
     - name: Build static binary
-      if: "contains(matrix.os, 'ubuntu-18.04')"
+      if: "contains(matrix.os, 'ubuntu')"
       run: "cabal clean"
     - name: Build static binary
-      if: "contains(matrix.os, 'ubuntu-18.04')"
+      if: "contains(matrix.os, 'ubuntu')"
       run: "cabal build --ghc-options=\"-optl-static -optl-pthread\""
 
     # Copy and strip static binary
