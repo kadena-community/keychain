@@ -1,4 +1,4 @@
-name: Build project
+name: Build statically linked binary
 
 on: push
 
