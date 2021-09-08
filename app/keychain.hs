@@ -193,8 +193,8 @@ keychainSubCmdParser = hsubparser $
   <> command "key" (info generateKeyPairFromPhrase $ progDesc "Show a keypair from a mnemonic phrase")
   <> command "sign" (info signWithKeyMaterial $ progDesc "Sign with a mnemonic phrase or standalone key pair")
   <> command "validate-yaml" (info validateParser $ progDesc "Validate the hash of a yaml transaction")
-  <> command "verify" (info verifySignature $ progDesc "Verify")
-  <> command "list" (info listKeys $ progDesc "List keys")
+  <> command "verify" (info verifySignature $ progDesc "Verify a signature")
+  <> command "list" (info listKeys $ progDesc "List an HD recovery phrase's public keys")
   )
 
 generatePhraseCmd :: Parser KeychainSubCommand
