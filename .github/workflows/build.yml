@@ -62,7 +62,7 @@ jobs:
     - name: Install build dependencies
       run: cabal build --only-dependencies
     - name: Build
-      run: cabal build
+      run: "cabal build --ghc-options='-optl-static -optl-pthread'"
 
     # Upload artifacts
     - name: Copy build artifact
