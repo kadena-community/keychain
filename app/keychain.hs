@@ -9,17 +9,27 @@ import Options.Applicative
 import Lens.Micro
 import Lens.Micro.TH
 
+import Data.Aeson (Value(..))
+import Data.Bifunctor
 import Data.ByteString (ByteString)
 import Data.ByteString.Base16
 import Data.ByteString.Base64
 import qualified Data.ByteString.Base64.URL as B64Url
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy.Char8 as LB
 import Data.Char
 import qualified Data.Map as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Encoding
 import qualified Data.Text.IO as T
+import qualified Data.YAML as Y
+import qualified Data.YAML.Aeson as YA
+import qualified Data.YAML.Event as Y
+import qualified Data.YAML.Schema as Y
+import qualified Data.YAML.Token as Y
 import Data.Word
+import Lens.Micro.Aeson
 import System.IO
 
 data KeychainCommand = KeychainCommand
@@ -30,7 +40,7 @@ data KeychainCommand = KeychainCommand
 
 type KeyFile = FilePath
 
-data Encoding = Raw | B16 | B64 | B64Url
+data Encoding = Raw | B16 | B64 | B64Url | Yaml
   deriving (Eq,Ord,Show,Read)
 
 encodingToText :: Encoding -> Text
@@ -39,6 +49,7 @@ encodingToText = \case
   B16 -> "b16"
   B64 -> "b64"
   B64Url -> "b64url"
+  Yaml -> "yaml"
 
 textToEncoding :: Text -> Maybe Encoding
 textToEncoding = \case
@@ -46,22 +57,32 @@ textToEncoding = \case
   "b16" -> Just B16
   "b64" -> Just B64
   "b64url" -> Just B64Url
+  "yaml" -> Just Yaml
   _ -> Nothing
+
+note :: e -> Maybe a -> Either e a
+note e = maybe (Left e) Right
 
 genericDecode :: Encoding -> ByteString -> Either Text ByteString
 genericDecode Raw = Right
 genericDecode B16 = decodeBase16
 genericDecode B64 = decodeBase64
 genericDecode B64Url = B64Url.decodeBase64
+genericDecode Yaml = decodeYamlBS -- We don't actually use the result of this case
 
-readAsEncoding :: Encoding -> IO (Either Text ByteString)
+decodeYamlBS :: ByteString -> Either Text ByteString
+decodeYamlBS bs = do
+  v :: Value <- first (T.pack . snd) $ YA.decode1Strict bs
+  fmap encodeUtf8 $ note "YAML must contain the key 'hash'" $ v ^? key "hash" . _String
+
+readAsEncoding :: Encoding -> IO ByteString
 readAsEncoding enc = do
   bs <- B.hGetContents stdin
   let trimmer :: Word8 -> Bool
       trimmer w = case enc of
                     Raw -> False
                     _ -> isSpace $ chr (fromIntegral w)
-  pure $ genericDecode enc $ B.dropWhile trimmer $ B.dropWhileEnd trimmer bs
+  pure $ B.dropWhile trimmer $ B.dropWhileEnd trimmer bs
 
 data KeychainSubCommand =
     KeychainSubCommand_GenSeedPhrase
@@ -75,8 +96,8 @@ data KeychainSubCommand =
 makeLenses ''KeychainSubCommand
 makeLenses ''KeychainCommand
 
-genPairFromPhrase :: MnemonicPhrase -> KeyIndex -> (EncryptedPrivateKey, PublicKey) 
-genPairFromPhrase phrase idx = 
+genPairFromPhrase :: MnemonicPhrase -> KeyIndex -> (EncryptedPrivateKey, PublicKey)
+genPairFromPhrase phrase idx =
   generateCryptoPairFromRoot (mnemonicToRoot phrase) "" idx
 
 runKeychain :: KeychainCommand -> IO ()
@@ -102,18 +123,34 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
       Nothing -> putStrLn $ "Error reading seed phrase from " <> keyfile
       Just phrase -> do
         T.putStrLn $ "Decoding with " <> encodingToText enc
-        ebs <- readAsEncoding enc
+        rawbs <- readAsEncoding enc
+        let ebs = genericDecode enc rawbs
         case ebs of
           Left e -> do
             T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
           Right msg -> do
             let (xprv, pub) = genPairFromPhrase phrase index
                 sig = sign xprv msg
-            T.putStrLn $ "PublicKey: " <> pubKeyToText pub
-            T.putStrLn $ "Signature: " <> sigToText sig
-            T.putStrLn $ pubKeyToText pub <> ": " <> sigToText sig
+            case enc of
+              Yaml -> do
+                let res = do
+                      v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
+                      pure (v & key "sigs" . key (pubKeyToText pub) .~ String (sigToText sig))
+                    encScalar s@(Y.SStr t) = case T.find (== '"') t of
+                      Just _ -> Right (Y.untagged, Y.SingleQuoted, t)
+                      Nothing -> Y.schemaEncoderScalar Y.coreSchemaEncoder s
+                    encScalar s = Y.schemaEncoderScalar Y.coreSchemaEncoder s
+                    senc = Y.setScalarStyle encScalar Y.coreSchemaEncoder
+                case res of
+                  Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
+                  Left e -> T.putStrLn e
+              _ -> do
+                T.putStrLn $ "PublicKey: " <> pubKeyToText pub
+                T.putStrLn $ "Signature: " <> sigToText sig
+                T.putStrLn $ pubKeyToText pub <> ": " <> sigToText sig
   KeychainSubCommand_Verify pubkey signature enc -> do
-    emsg <- readAsEncoding enc
+    rawbs <- readAsEncoding enc
+    let emsg = genericDecode enc rawbs
     case emsg of
       Left e ->
         T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
@@ -157,7 +194,7 @@ generateKeyPairFromPhrase= KeychainSubCommand_GetKeypair
 
 encodingOption :: Parser Encoding
 encodingOption = option (maybeReader $ textToEncoding . T.pack)
-                        (short 'e' <> long "encoding" <> value B64Url <> help "Message encoding (raw, b16, b64, or b64url)")
+                        (short 'e' <> long "encoding" <> value Yaml <> help "Message encoding (raw, b16, b64, b64url, or yaml (default: yaml))")
 
 signWithPhrase :: Parser KeychainSubCommand
 signWithPhrase = KeychainSubCommand_Sign
