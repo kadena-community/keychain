@@ -102,6 +102,7 @@ data KeychainSubCommand =
   -- TODO: MAKE INDEX OPTION, DEFAULT TO 0
   | KeychainSubCommand_GetKeypair KeyFile KeyIndex
   | KeychainSubCommand_Sign KeyFile (Maybe KeyIndex) Encoding
+  | KeychainSubCommand_ValidateYaml FilePath
   | KeychainSubCommand_Verify PublicKey Signature Encoding
   | KeychainSubCommand_ListKeys KeyFile KeyIndex
   deriving (Eq, Show)
@@ -154,6 +155,13 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
                   Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
                   Left e -> T.putStrLn e
               _ -> T.putStrLn $ pub <> ": " <> toB16 sig
+  KeychainSubCommand_ValidateYaml yamlfile -> do
+    bs <- B.readFile yamlfile
+    case decodeYamlBS bs of
+      Left e -> do
+        putStrLn $ "There was a problem with tx yaml file " <> yamlfile
+        T.putStrLn e
+      Right _ -> putStrLn "Your tx yaml passes basic consistency checks"
   KeychainSubCommand_Verify pubkey signature enc -> do
     rawbs <- readAsEncoding enc
     let emsg = genericDecode enc rawbs
@@ -183,7 +191,8 @@ keychainSubCmdParser :: Parser KeychainSubCommand
 keychainSubCmdParser = hsubparser $
   (  command "gen" (info generatePhraseCmd $ progDesc "Generate a mnemonic phrase" )
   <> command "key" (info generateKeyPairFromPhrase $ progDesc "Show a keypair from a mnemonic phrase")
-  <> command "sign" (info signWithPhrase $ progDesc "Sign with a mnemonic phrase or standalone key pair")
+  <> command "sign" (info signWithKeyMaterial $ progDesc "Sign with a mnemonic phrase or standalone key pair")
+  <> command "validate-yaml" (info validateParser $ progDesc "Validate the hash of a yaml transaction")
   <> command "verify" (info verifySignature $ progDesc "Verify")
   <> command "list" (info listKeys $ progDesc "List keys")
   )
@@ -202,13 +211,17 @@ encodingOption :: Parser Encoding
 encodingOption = option (maybeReader $ textToEncoding . T.pack)
                         (short 'e' <> long "encoding" <> value Yaml <> help "Message encoding (raw, b16, b64, b64url, or yaml (default: yaml))")
 
-signWithPhrase :: Parser KeychainSubCommand
-signWithPhrase = KeychainSubCommand_Sign
+signWithKeyMaterial :: Parser KeychainSubCommand
+signWithKeyMaterial = KeychainSubCommand_Sign
   <$> (argument str $ metavar "KEY-FILE" )
   <*> optional (argument keyIndexReader $ metavar "INDEX" )
   <*> encodingOption
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)
+
+validateParser :: Parser KeychainSubCommand
+validateParser = KeychainSubCommand_ValidateYaml
+  <$> (argument str $ metavar "YAML-FILE" )
 
 verifySignature :: Parser KeychainSubCommand
 verifySignature = KeychainSubCommand_Verify
