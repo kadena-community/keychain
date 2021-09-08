@@ -9,8 +9,10 @@ import Options.Applicative
 import Lens.Micro
 import Lens.Micro.TH
 
+import qualified Crypto.Hash as Crypto
 import Data.Aeson (Value(..))
 import Data.Bifunctor
+import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import Data.ByteString.Base16
 import Data.ByteString.Base64
@@ -70,7 +72,21 @@ genericDecode Yaml = decodeYamlBS -- We don't actually use the result of this ca
 decodeYamlBS :: ByteString -> Either Text ByteString
 decodeYamlBS bs = do
   v :: Value <- first (T.pack . snd) $ YA.decode1Strict bs
-  B64Url.decodeBase64 . encodeUtf8 =<< note "YAML must contain the key 'hash'" (v ^? key "hash" . _String)
+  let mhash = hush . B64Url.decodeBase64 . encodeUtf8 =<< (v ^? key "hash" . _String)
+      mcmd = encodeUtf8 <$> (v ^? key "cmd" . _String)
+      calcHash = BA.convert . Crypto.hashWith Crypto.Blake2b_256
+  case (mhash, mcmd) of
+    (Nothing, Nothing) -> Left "YAML must contain a key 'hash' and/or 'cmd'"
+    (Just hash, Nothing) -> Right hash
+    (Nothing, Just cmd) -> Right $ calcHash cmd
+    (Just hash, Just cmd) ->
+      if calcHash cmd == hash
+        then Right hash
+        else Left $ T.unlines
+               [ "DANGER!!! The hash does not match the command!  Someone may be trying to get you to sign something malicious!"
+               , "If you are sure you want to proceed you should delete either the hash or the cmd from your YAML."
+               , "PROCEED WITH GREAT CAUTION!!!"
+               ]
 
 readAsEncoding :: Encoding -> IO ByteString
 readAsEncoding enc = do
@@ -120,7 +136,7 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
         let ebs = genericDecode enc rawbs
         case ebs of
           Left e -> do
-            T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
+            T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
           Right msg -> do
             let pub = getMaterialPublic material
                 sig = signWithMaterial material msg
