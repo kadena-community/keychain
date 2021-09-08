@@ -15,8 +15,6 @@ module Keychain.Keygen
 
 import qualified Cardano.Crypto.Wallet as Crypto
 import Control.Monad.IO.Class
-import Control.Monad.Trans
-import Control.Monad.Trans.Maybe
 import qualified Crypto.Encoding.BIP39 as Crypto
 import qualified Crypto.Encoding.BIP39.English as Crypto
 import Crypto.Error
@@ -118,25 +116,18 @@ data KeyMaterial
   | RawKeyPair ED25519.SecretKey ED25519.PublicKey
   deriving (Eq,Show)
 
-hoistMaybe :: (Applicative m) => Maybe b -> MaybeT m b
-hoistMaybe = MaybeT . pure
-
 readKeyMaterial :: FilePath -> Maybe KeyIndex -> IO (Maybe KeyMaterial)
 readKeyMaterial keyfile mindex = do
   t <- T.strip <$> T.readFile keyfile
-  res <- case mindex of
-    Nothing -> runMaybeT $ do
-      v :: Value <- hoistMaybe $ hush $ YA.decode1Strict $ T.encodeUtf8 t
-      rawPub <- hoistMaybe $ hush . fromB16 =<< (v ^? key "public" . _String)
-      rawSec <- hoistMaybe $ hush . fromB16 =<< (v ^? key "secret" . _String)
-      lift $ do
-        print rawPub
-        print rawSec
-      pub <- hoistMaybe $ maybeCryptoError $ ED25519.publicKey rawPub
-      sec <- hoistMaybe $ maybeCryptoError $ ED25519.secretKey rawSec
-      pure $ RawKeyPair sec pub
-    Just index -> do
-      pure $ (\p -> RecoveryPhrase p index) <$> mkMnemonicPhrase (T.words t)
+  let res = case mindex of
+        Nothing -> do
+          v :: Value <- hush $ YA.decode1Strict $ T.encodeUtf8 t
+          rawPub <- hush . fromB16 =<< (v ^? key "public" . _String)
+          rawSec <- hush . fromB16 =<< (v ^? key "secret" . _String)
+          pub <- maybeCryptoError $ ED25519.publicKey rawPub
+          sec <- maybeCryptoError $ ED25519.secretKey rawSec
+          pure $ RawKeyPair sec pub
+        Just index -> (\p -> RecoveryPhrase p index) <$> mkMnemonicPhrase (T.words t)
   return res
 
 genPairFromPhrase :: MnemonicPhrase -> KeyIndex -> (EncryptedPrivateKey, PublicKey)

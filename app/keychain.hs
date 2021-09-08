@@ -122,8 +122,6 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
           Left e -> do
             T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
           Right msg -> do
-            putStrLn "DEBUGGING KEYS"
-            print msg
             let pub = getMaterialPublic material
                 sig = signWithMaterial material msg
             case enc of
@@ -139,10 +137,7 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
                 case res of
                   Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
                   Left e -> T.putStrLn e
-              _ -> do
-                T.putStrLn $ "PublicKey: " <> pub
-                T.putStrLn $ "Signature: " <> toB16 sig
-                T.putStrLn $ pub <> ": " <> toB16 sig
+              _ -> T.putStrLn $ pub <> ": " <> toB16 sig
   KeychainSubCommand_Verify pubkey signature enc -> do
     rawbs <- readAsEncoding enc
     let emsg = genericDecode enc rawbs
