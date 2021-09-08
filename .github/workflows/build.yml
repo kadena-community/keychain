@@ -60,7 +60,7 @@ jobs:
     - name: Display outdated packages
       run: cabal outdated
     - name: Install build dependencies
-      run: cabal build --only-dependencies
+      run: cabal build --only-dependencies --ghc-options='-optl-static -optl-pthread'"
     - name: Build
       run: "cabal build --ghc-options='-optl-static -optl-pthread'"
 
