@@ -35,6 +35,9 @@ library
   import:          basic-project
   hs-source-dirs:  src
   build-depends:
+    HsYAML,
+    HsYAML-aeson,
+    aeson,
     base                   >= 4.12 && < 4.15,
     base16                 >= 0.3.0 && < 0.4,
     bytestring             >= 0.10.12 && < 0.11,
@@ -42,7 +45,11 @@ library
     containers             >= 0.6.2 && < 0.7,
     cryptonite             >= 0.28 && < 0.29,
     memory                 >= 0.15.0 && < 0.16,
+    microlens              >= 0.4.12 && < 0.5,
+    microlens-aeson        >= 2.3.1 && < 2.4,
+    mtl,
     text                   >= 1.2.4 && < 1.3,
+    transformers
  exposed-modules:
                   Keychain.Keygen
                   Keychain.KeyPair
@@ -64,8 +71,8 @@ executable keychain
     bytestring,
     containers,
     keychain,
-    microlens              >= 0.4.12 && < 0.5,
-    microlens-aeson        >= 2.3.1 && < 2.4,
+    microlens,
+    microlens-aeson,
     microlens-th           >= 0.4.3 && < 0.5,
     optparse-applicative   >= 0.16.1 && < 0.17,
     text

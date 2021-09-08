@@ -7,23 +7,36 @@ module Keychain.Keygen
   , MnemonicPhrase
   , mkMnemonicPhrase
   , readPhraseFromFile
+  , KeyMaterial(..)
+  , readKeyMaterial
+  , signWithMaterial
+  , getMaterialPublic
   ) where
 
 import qualified Cardano.Crypto.Wallet as Crypto
 import Control.Monad.IO.Class
+import Control.Monad.Trans
+import Control.Monad.Trans.Maybe
 import qualified Crypto.Encoding.BIP39 as Crypto
 import qualified Crypto.Encoding.BIP39.English as Crypto
+import Crypto.Error
+import qualified Crypto.PubKey.Ed25519 as ED25519
 import qualified Crypto.Random.Entropy
+import Data.Aeson (Value(..))
 import Data.Bifunctor
 import Data.Bits ((.|.))
+import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
 import qualified Data.Map as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.IO as T
-import GHC.Natural
 import Data.Word (Word32)
+import qualified Data.YAML.Aeson as YA
+import GHC.Natural
+import Lens.Micro
+import Lens.Micro.Aeson
 import Keychain.KeyPair
 import Keychain.Utils
 
@@ -99,3 +112,43 @@ newtype WordKey = WordKey { _unWordKey :: Int }
 
 wordsToPhraseMap :: [Text] -> Map.Map WordKey Text
 wordsToPhraseMap = Map.fromList . zip [WordKey 1 ..]
+
+data KeyMaterial
+  = RecoveryPhrase MnemonicPhrase KeyIndex
+  | RawKeyPair ED25519.SecretKey ED25519.PublicKey
+  deriving (Eq,Show)
+
+hoistMaybe :: (Applicative m) => Maybe b -> MaybeT m b
+hoistMaybe = MaybeT . pure
+
+readKeyMaterial :: FilePath -> Maybe KeyIndex -> IO (Maybe KeyMaterial)
+readKeyMaterial keyfile mindex = do
+  t <- T.strip <$> T.readFile keyfile
+  res <- case mindex of
+    Nothing -> runMaybeT $ do
+      v :: Value <- hoistMaybe $ hush $ YA.decode1Strict $ T.encodeUtf8 t
+      rawPub <- hoistMaybe $ hush . fromB16 =<< (v ^? key "public" . _String)
+      rawSec <- hoistMaybe $ hush . fromB16 =<< (v ^? key "secret" . _String)
+      lift $ do
+        print rawPub
+        print rawSec
+      pub <- hoistMaybe $ maybeCryptoError $ ED25519.publicKey rawPub
+      sec <- hoistMaybe $ maybeCryptoError $ ED25519.secretKey rawSec
+      pure $ RawKeyPair sec pub
+    Just index -> do
+      pure $ (\p -> RecoveryPhrase p index) <$> mkMnemonicPhrase (T.words t)
+  return res
+
+genPairFromPhrase :: MnemonicPhrase -> KeyIndex -> (EncryptedPrivateKey, PublicKey)
+genPairFromPhrase phrase idx =
+  generateCryptoPairFromRoot (mnemonicToRoot phrase) "" idx
+
+signWithMaterial :: KeyMaterial -> ByteString -> ByteString
+signWithMaterial (RecoveryPhrase phrase index) msg =
+  let (xprv, _) = genPairFromPhrase phrase index
+   in T.encodeUtf8 $ sigToText $ signHD xprv msg
+signWithMaterial (RawKeyPair secret _) msg = BA.convert $ sign secret msg
+
+getMaterialPublic :: KeyMaterial -> Text
+getMaterialPublic (RecoveryPhrase phrase index) = pubKeyToText $ snd $ genPairFromPhrase phrase index
+getMaterialPublic (RawKeyPair _ pub) = toB16 $ BA.convert pub

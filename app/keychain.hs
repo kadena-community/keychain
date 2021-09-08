@@ -60,9 +60,6 @@ textToEncoding = \case
   "yaml" -> Just Yaml
   _ -> Nothing
 
-note :: e -> Maybe a -> Either e a
-note e = maybe (Left e) Right
-
 genericDecode :: Encoding -> ByteString -> Either Text ByteString
 genericDecode Raw = Right
 genericDecode B16 = decodeBase16
@@ -73,7 +70,7 @@ genericDecode Yaml = decodeYamlBS -- We don't actually use the result of this ca
 decodeYamlBS :: ByteString -> Either Text ByteString
 decodeYamlBS bs = do
   v :: Value <- first (T.pack . snd) $ YA.decode1Strict bs
-  fmap encodeUtf8 $ note "YAML must contain the key 'hash'" $ v ^? key "hash" . _String
+  B64Url.decodeBase64 . encodeUtf8 =<< note "YAML must contain the key 'hash'" (v ^? key "hash" . _String)
 
 readAsEncoding :: Encoding -> IO ByteString
 readAsEncoding enc = do
@@ -88,17 +85,13 @@ data KeychainSubCommand =
     KeychainSubCommand_GenSeedPhrase
   -- TODO: MAKE INDEX OPTION, DEFAULT TO 0
   | KeychainSubCommand_GetKeypair KeyFile KeyIndex
-  | KeychainSubCommand_Sign KeyFile KeyIndex Encoding
+  | KeychainSubCommand_Sign KeyFile (Maybe KeyIndex) Encoding
   | KeychainSubCommand_Verify PublicKey Signature Encoding
   | KeychainSubCommand_ListKeys KeyFile KeyIndex
   deriving (Eq, Show)
 
 makeLenses ''KeychainSubCommand
 makeLenses ''KeychainCommand
-
-genPairFromPhrase :: MnemonicPhrase -> KeyIndex -> (EncryptedPrivateKey, PublicKey)
-genPairFromPhrase phrase idx =
-  generateCryptoPairFromRoot (mnemonicToRoot phrase) "" idx
 
 runKeychain :: KeychainCommand -> IO ()
 runKeychain cmd = case cmd ^. keychainCommand_subCommand of
@@ -118,10 +111,10 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
      , "Encrypted private key: " <> encryptedPrivateKeyToText xPrv
      ]
   KeychainSubCommand_Sign keyfile index enc -> do
-    mphrase <- readPhraseFromFile keyfile
-    case mphrase of
-      Nothing -> putStrLn $ "Error reading seed phrase from " <> keyfile
-      Just phrase -> do
+    mkeymaterial <- readKeyMaterial keyfile index
+    case mkeymaterial of
+      Nothing -> putStrLn $ "Error reading key material from " <> keyfile
+      Just material -> do
         T.putStrLn $ "Decoding with " <> encodingToText enc
         rawbs <- readAsEncoding enc
         let ebs = genericDecode enc rawbs
@@ -129,13 +122,15 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
           Left e -> do
             T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
           Right msg -> do
-            let (xprv, pub) = genPairFromPhrase phrase index
-                sig = sign xprv msg
+            putStrLn "DEBUGGING KEYS"
+            print msg
+            let pub = getMaterialPublic material
+                sig = signWithMaterial material msg
             case enc of
               Yaml -> do
                 let res = do
                       v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
-                      pure (v & key "sigs" . key (pubKeyToText pub) .~ String (sigToText sig))
+                      pure (v & key "sigs" . key pub .~ String (toB16 sig))
                     encScalar s@(Y.SStr t) = case T.find (== '"') t of
                       Just _ -> Right (Y.untagged, Y.SingleQuoted, t)
                       Nothing -> Y.schemaEncoderScalar Y.coreSchemaEncoder s
@@ -145,9 +140,9 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
                   Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
                   Left e -> T.putStrLn e
               _ -> do
-                T.putStrLn $ "PublicKey: " <> pubKeyToText pub
-                T.putStrLn $ "Signature: " <> sigToText sig
-                T.putStrLn $ pubKeyToText pub <> ": " <> sigToText sig
+                T.putStrLn $ "PublicKey: " <> pub
+                T.putStrLn $ "Signature: " <> toB16 sig
+                T.putStrLn $ pub <> ": " <> toB16 sig
   KeychainSubCommand_Verify pubkey signature enc -> do
     rawbs <- readAsEncoding enc
     let emsg = genericDecode enc rawbs
@@ -177,7 +172,7 @@ keychainSubCmdParser :: Parser KeychainSubCommand
 keychainSubCmdParser = hsubparser $
   (  command "gen" (info generatePhraseCmd $ progDesc "Generate a mnemonic phrase" )
   <> command "key" (info generateKeyPairFromPhrase $ progDesc "Show a keypair from a mnemonic phrase")
-  <> command "sign" (info signWithPhrase $ progDesc "Sign")
+  <> command "sign" (info signWithPhrase $ progDesc "Sign with a mnemonic phrase or standalone key pair")
   <> command "verify" (info verifySignature $ progDesc "Verify")
   <> command "list" (info listKeys $ progDesc "List keys")
   )
@@ -199,7 +194,7 @@ encodingOption = option (maybeReader $ textToEncoding . T.pack)
 signWithPhrase :: Parser KeychainSubCommand
 signWithPhrase = KeychainSubCommand_Sign
   <$> (argument str $ metavar "KEY-FILE" )
-  <*> (argument keyIndexReader $ metavar "INDEX" )
+  <*> optional (argument keyIndexReader $ metavar "INDEX" )
   <*> encodingOption
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)

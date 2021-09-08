@@ -1,6 +1,7 @@
 module Keychain.KeyPair where
 
 import qualified Cardano.Crypto.Wallet as Crypto
+import qualified Crypto.PubKey.Ed25519 as ED25519
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import qualified Data.ByteString as BS
@@ -36,8 +37,12 @@ toPubKey txt = do
 encryptedPrivateKeyToText :: EncryptedPrivateKey -> Text
 encryptedPrivateKeyToText (EncryptedPrivateKey xprv) = toB16 $ Crypto.unXPrv xprv
 
-sign :: EncryptedPrivateKey -> ByteString -> Signature 
-sign (EncryptedPrivateKey xprv) msg =
+sign :: ED25519.SecretKey -> ByteString -> ED25519.Signature
+sign secret msg =
+  ED25519.sign secret (ED25519.toPublic secret) msg
+
+signHD :: EncryptedPrivateKey -> ByteString -> Signature
+signHD (EncryptedPrivateKey xprv) msg =
   Signature $ Crypto.sign @ByteString "" xprv msg
 
 verify :: PublicKey -> Signature -> ByteString -> Bool
