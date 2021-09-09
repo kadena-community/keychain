@@ -44,9 +44,9 @@ jobs:
     - name: Display outdated packages
       run: cabal outdated
     - name: Install build dependencies
-      run: cabal build --only-dependencies
+      run: 'cabal build --only-dependencies --ghc-options="-static -optl-static -optl-pthread"'
     - name: Build static binary
-      run: "cabal build --ghc-options=\"-optl-static -optl-pthread\""
+      run: 'cabal build --ghc-options="-static -optl-static -optl-pthread"'
 
     # Copy and strip binary
     - name: Copy build artifact
