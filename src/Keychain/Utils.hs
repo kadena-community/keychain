@@ -15,6 +15,9 @@ import Text.Read (readMaybe)
 tshow :: Show a => a -> Text
 tshow = T.pack . show
 
+note :: e -> Maybe a -> Either e a
+note e = maybe (Left e) Right
+
 hush :: Either e a -> Maybe a
 hush (Left _) = Nothing
 hush (Right a) = Just a
