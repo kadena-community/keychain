@@ -44,7 +44,7 @@ jobs:
     - name: Display outdated packages
       run: cabal outdated
     - name: Build static binary
-      run: 'cabal build "--ghc-option=-optl=-static" "--ghc-option=-optl=-pthread" "--ghc-option=-optl=-L${pkgs.gmp6.override { withStatic = true; }}/lib" "--ghc-option=-optl=-L${pkgs.zlib.static}/lib" "--ghc-option=-optl=-L${pkgs.glibc.static}/lib" --disable-executable-dynamic --disable-shared'
+      run: 'cabal build "--ghc-option=-optl=-static" "--ghc-option=-optl=-pthread" --disable-executable-dynamic --disable-shared'
 
     # Copy and strip binary
     - name: Copy build artifact
