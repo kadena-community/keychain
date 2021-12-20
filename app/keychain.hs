@@ -32,6 +32,7 @@ import qualified Data.YAML.Schema as Y
 import qualified Data.YAML.Token as Y
 import Data.Word
 import Lens.Micro.Aeson
+import System.Exit
 import System.IO
 
 data KeychainCommand = KeychainCommand
@@ -84,7 +85,7 @@ decodeYamlBS bs = do
         then Right hash
         else Left $ T.unlines
                [ "DANGER!!! The hash does not match the command!  Someone may be trying to get you to sign something malicious!"
-               , "If you are sure you want to proceed you should delete either the hash or the cmd from your YAML."
+               , "If you are sure you want to proceed you should delete either the hash or the cmd (almost certainly the hash) from your YAML."
                , "PROCEED WITH GREAT CAUTION!!!"
                ]
 
@@ -130,14 +131,14 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
   KeychainSubCommand_Sign keyfile index enc -> do
     mkeymaterial <- readKeyMaterial keyfile index
     case mkeymaterial of
-      Nothing -> putStrLn $ "Error reading key material from " <> keyfile
+      Nothing -> die $ "Error reading key material from " <> keyfile
       Just material -> do
-        T.putStrLn $ "Decoding with " <> encodingToText enc
+        hPutStrLn stderr $ T.unpack $ "Decoding with " <> encodingToText enc
         rawbs <- readAsEncoding enc
         let ebs = genericDecode enc rawbs
         case ebs of
           Left e -> do
-            T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
+            die $ T.unpack $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
           Right msg -> do
             let pub = getMaterialPublic material
                 sig = signWithMaterial material msg
@@ -145,7 +146,7 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
               Yaml -> do
                 let res = do
                       v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
-                      pure (v & key "sigs" . key pub .~ String (toB16 sig))
+                      pure (v & key "sigs" . key pub .~ String (decodeUtf8 sig))
                     encScalar s@(Y.SStr t) = case T.find (== '"') t of
                       Just _ -> Right (Y.untagged, Y.SingleQuoted, t)
                       Nothing -> Y.schemaEncoderScalar Y.coreSchemaEncoder s
@@ -153,8 +154,9 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
                     senc = Y.setScalarStyle encScalar Y.coreSchemaEncoder
                 case res of
                   Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
-                  Left e -> T.putStrLn e
-              _ -> T.putStrLn $ pub <> ": " <> toB16 sig
+                  Left e -> die $ T.unpack e
+              _ -> do
+                T.putStrLn $ pub <> ": " <> decodeUtf8 sig
   KeychainSubCommand_ValidateYaml yamlfile -> do
     bs <- B.readFile yamlfile
     case decodeYamlBS bs of
