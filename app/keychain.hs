@@ -1,39 +1,49 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 
-import Keychain.Keygen
-import Keychain.KeyPair
-import Keychain.Utils
-import Options.Applicative
-import Lens.Micro
-import Lens.Micro.TH
-
+------------------------------------------------------------------------------
 import qualified Crypto.Hash as Crypto
-import Data.Aeson (Value(..))
-import Data.Bifunctor
+import           Data.Aeson hiding (Encoding)
+import           Data.Bifunctor
 import qualified Data.ByteArray as BA
-import Data.ByteString (ByteString)
-import Data.ByteString.Base16
-import Data.ByteString.Base64
-import qualified Data.ByteString.Base64.URL as B64Url
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+import           Data.ByteString.Base16
+import           Data.ByteString.Base64
+import qualified Data.ByteString.Base64.URL as B64Url
 import qualified Data.ByteString.Lazy.Char8 as LB
-import Data.Char
+import           Data.Char
+import           Data.Either
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Map as Map
-import Data.Text (Text)
+import           Data.Maybe
+import qualified Data.Set as S
+import           Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Encoding
 import qualified Data.Text.IO as T
+import           Data.Text.Encoding
+import qualified Data.Vector as V
 import qualified Data.YAML as Y
 import qualified Data.YAML.Aeson as YA
 import qualified Data.YAML.Event as Y
 import qualified Data.YAML.Schema as Y
 import qualified Data.YAML.Token as Y
-import Data.Word
-import Lens.Micro.Aeson
-import System.Exit
-import System.IO
+import           Data.Word
+import           Lens.Micro
+import           Lens.Micro.Aeson
+import           Lens.Micro.TH
+import           Options.Applicative
+import           Snap.Core
+import           Snap.Http.Server
+import           System.Exit
+import           System.IO
+------------------------------------------------------------------------------
+import Keychain.KeyPair
+import Keychain.Keygen
+import Keychain.Utils
+------------------------------------------------------------------------------
 
 data KeychainCommand = KeychainCommand
   { _keychainCommand_subCommand :: KeychainSubCommand
@@ -43,7 +53,7 @@ data KeychainCommand = KeychainCommand
 
 type KeyFile = FilePath
 
-data Encoding = Raw | B16 | B64 | B64Url | Yaml
+data Encoding = Raw | B16 | B64 | B64Url | Yaml | Cmd
   deriving (Eq,Ord,Show,Read)
 
 encodingToText :: Encoding -> Text
@@ -53,6 +63,7 @@ encodingToText = \case
   B64 -> "b64"
   B64Url -> "b64url"
   Yaml -> "yaml"
+  Cmd -> "cmd"
 
 textToEncoding :: Text -> Maybe Encoding
 textToEncoding = \case
@@ -61,6 +72,7 @@ textToEncoding = \case
   "b64" -> Just B64
   "b64url" -> Just B64Url
   "yaml" -> Just Yaml
+  "cmd" -> Just Cmd
   _ -> Nothing
 
 genericDecode :: Encoding -> ByteString -> Either Text ByteString
@@ -69,13 +81,13 @@ genericDecode B16 = decodeBase16
 genericDecode B64 = decodeBase64
 genericDecode B64Url = B64Url.decodeBase64
 genericDecode Yaml = decodeYamlBS -- We don't actually use the result of this case
+genericDecode Cmd = decodeCmdBS
 
 decodeYamlBS :: ByteString -> Either Text ByteString
 decodeYamlBS bs = do
   v :: Value <- first (T.pack . snd) $ YA.decode1Strict bs
   let mhash = hush . B64Url.decodeBase64 . encodeUtf8 =<< (v ^? key "hash" . _String)
       mcmd = encodeUtf8 <$> (v ^? key "cmd" . _String)
-      calcHash = BA.convert . Crypto.hashWith Crypto.Blake2b_256
   case (mhash, mcmd) of
     (Nothing, Nothing) -> Left "YAML must contain a key 'hash' and/or 'cmd'"
     (Just hash, Nothing) -> Right hash
@@ -88,6 +100,12 @@ decodeYamlBS bs = do
                , "If you are sure you want to proceed you should delete either the hash or the cmd (almost certainly the hash) from your YAML."
                , "PROCEED WITH GREAT CAUTION!!!"
                ]
+
+decodeCmdBS :: ByteString -> Either Text ByteString
+decodeCmdBS cmd = Right $ calcHash cmd
+
+calcHash :: ByteString -> ByteString
+calcHash = BA.convert . Crypto.hashWith Crypto.Blake2b_256
 
 readAsEncoding :: Encoding -> IO ByteString
 readAsEncoding enc = do
@@ -106,6 +124,7 @@ data KeychainSubCommand =
   | KeychainSubCommand_ValidateYaml FilePath
   | KeychainSubCommand_Verify PublicKey Signature Encoding
   | KeychainSubCommand_ListKeys KeyFile KeyIndex
+  | KeychainSubCommand_Serve KeyFile (Maybe KeyIndex) (Maybe Int)
   deriving (Eq, Show)
 
 makeLenses ''KeychainSubCommand
@@ -137,12 +156,12 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
         rawbs <- readAsEncoding enc
         let ebs = genericDecode enc rawbs
         case ebs of
-          Left e -> do
+          Left e ->
             die $ T.unpack $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
           Right msg -> do
             let pub = getMaterialPublic material
                 sig = signWithMaterial material msg
-            case enc of
+            esig <- case enc of
               Yaml -> do
                 let res = do
                       v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
@@ -153,10 +172,11 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
                     encScalar s = Y.schemaEncoderScalar Y.coreSchemaEncoder s
                     senc = Y.setScalarStyle encScalar Y.coreSchemaEncoder
                 case res of
-                  Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
-                  Left e -> die $ T.unpack e
+                  Right v -> pure $ Right $ decodeUtf8 $ LB.toStrict $ YA.encodeValue' senc Y.UTF8 [v]
+                  Left e -> pure $ Left $ T.unpack e
               _ -> do
-                T.putStrLn $ pub <> ": " <> decodeUtf8 sig
+                pure $ Right $ pub <> ": " <> decodeUtf8 sig
+            either die T.putStrLn esig
   KeychainSubCommand_ValidateYaml yamlfile -> do
     bs <- B.readFile yamlfile
     case decodeYamlBS bs of
@@ -177,7 +197,11 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
     let root = mnemonicToRoot phrase
         getAndShow n = tshow (unKeyIndex n) <> ": " <> pubKeyToText (snd $ generateCryptoPairFromRoot root "" n)
     mapM_ (T.putStrLn . getAndShow) [0..index]
-
+  KeychainSubCommand_Serve keyfile index mport -> do
+    mmaterial <- readKeyMaterial keyfile index
+    case mmaterial of
+      Nothing -> die "Could not read key material"
+      Just material -> httpServe (setPort (fromMaybe 8000 mport) mempty) (routes material)
 
 keychainOpts :: ParserInfo KeychainCommand
 keychainOpts = info (keychainParser <**> helper)
@@ -197,6 +221,7 @@ keychainSubCmdParser = hsubparser $
   <> command "validate-yaml" (info validateParser $ progDesc "Validate the hash of a yaml transaction")
   <> command "verify" (info verifySignature $ progDesc "Verify a signature")
   <> command "list" (info listKeys $ progDesc "List an HD recovery phrase's public keys")
+  <> command "serve" (info signWithServer $ progDesc "Serve the quicksign API")
   )
 
 generatePhraseCmd :: Parser KeychainSubCommand
@@ -218,6 +243,14 @@ signWithKeyMaterial = KeychainSubCommand_Sign
   <$> (argument str $ metavar "KEY-FILE" )
   <*> optional (argument keyIndexReader $ metavar "INDEX" )
   <*> encodingOption
+  where
+    keyIndexReader = maybeReader (fmap KeyIndex . readNatural)
+
+signWithServer :: Parser KeychainSubCommand
+signWithServer = KeychainSubCommand_Serve
+  <$> (argument str $ metavar "KEY-FILE" )
+  <*> optional (argument keyIndexReader $ metavar "INDEX" )
+  <*> optional (option auto (short 'p' <> long "port" <> value 9467 <> metavar "PORT"))
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)
 
@@ -244,6 +277,55 @@ listKeys = KeychainSubCommand_ListKeys
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)
 
+routes :: KeyMaterial -> Snap ()
+routes material = route
+  [ ("v1/quickSign", method OPTIONS allowCors)
+  , ("v1/quickSign", method POST $ quicksignHandler material)
+  ]
+
+allowCors :: Snap ()
+allowCors = do
+  modifyResponse $
+    addHeader "Access-Control-Allow-Origin" "*"
+    . addHeader "Access-Control-Allow-Headers" "Accept, Accept-Language, Content-Language, Content-Type"
+
+quicksignHandler :: KeyMaterial -> Snap ()
+quicksignHandler material = do
+  modifyResponse $
+    addHeader "Access-Control-Allow-Origin" "*"
+  bs <- readRequestBody 1048576
+  let eres = do
+        cmds <- note "No field \"cmds\"" $ bs ^? key "cmds" . _Array
+        let esigned = map (signWithAllRelevantKeys material) $ V.toList cmds
+        case partitionEithers esigned of
+          ([], vs) -> Right vs
+          (es, _) -> Left $ T.pack $ unlines es
+  case eres of
+    Left e -> do
+      writeText $ "Got errors: " <> e
+      modifyResponse $ setResponseStatus 406 "Malformed command"
+    Right a -> writeLBS $ encode $ object [ "results" .= a ]
+
+signWithAllRelevantKeys :: KeyMaterial -> Value -> Either String Value
+signWithAllRelevantKeys mat (String cmd) = do
+    signers <- note ("Error in signers:\n" <> T.unpack (decodeUtf8 $ LB.toStrict $ encode cmd)) $
+      cmd ^? _Value . key "signers" . _Array
+    let eks = map (\s -> note "Error in pubKey" $ s ^? key "pubKey" . _String) $ V.toList signers
+    case partitionEithers eks of
+      ([], keys) -> do
+        let emptySigs = HM.fromList $ map (, Null) keys
+            txKeys = S.fromList keys
+            signFuncs = getMaterialSignFuncs mat
+            rk = calcHash $ encodeUtf8 cmd
+            addSig k = maybe id (\mf -> HM.insert k (String $ encodeBase16 $ mf rk)) $ Map.lookup k signFuncs
+            sigs = foldr addSig emptySigs $ S.toList txKeys
+        Right $ object
+          [ "hash" .= (B64Url.encodeBase64 rk)
+          , "sigs" .= Object sigs
+          , "cmd" .= cmd
+          ]
+      (es, _) -> Left $ unlines es
+signWithAllRelevantKeys _ _ = Left "Not the right type"
 
 main :: IO ()
 main = do

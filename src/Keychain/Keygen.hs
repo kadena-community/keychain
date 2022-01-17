@@ -11,6 +11,7 @@ module Keychain.Keygen
   , readKeyMaterial
   , signWithMaterial
   , getMaterialPublic
+  , getMaterialSignFuncs
   ) where
 
 import qualified Cardano.Crypto.Wallet as Crypto
@@ -25,6 +26,7 @@ import Data.Bifunctor
 import Data.Bits ((.|.))
 import qualified Data.ByteArray as BA
 import Data.ByteString (ByteString)
+import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -116,6 +118,9 @@ data KeyMaterial
   | RawKeyPair ED25519.SecretKey ED25519.PublicKey
   deriving (Eq,Show)
 
+-- | Since the HD key index is included in KeyMaterial, the KeyIndex passed to
+-- this function can also be used to represent a max number of keys that should
+-- be tried.
 readKeyMaterial :: FilePath -> Maybe KeyIndex -> IO (Maybe KeyMaterial)
 readKeyMaterial keyfile mindex = do
   t <- T.strip <$> T.readFile keyfile
@@ -135,11 +140,14 @@ genPairFromPhrase phrase idx =
   generateCryptoPairFromRoot (mnemonicToRoot phrase) "" idx
 
 signWithMaterial :: KeyMaterial -> ByteString -> ByteString
-signWithMaterial (RecoveryPhrase phrase index) msg =
-  let (xprv, _) = genPairFromPhrase phrase index
-   in T.encodeUtf8 $ sigToText $ signHD xprv msg
+signWithMaterial (RecoveryPhrase phrase index) msg = sigBytes $ signHD (fst $ genPairFromPhrase phrase index) msg
 signWithMaterial (RawKeyPair secret _) msg = BA.convert $ sign secret msg
 
 getMaterialPublic :: KeyMaterial -> Text
 getMaterialPublic (RecoveryPhrase phrase index) = pubKeyToText $ snd $ genPairFromPhrase phrase index
 getMaterialPublic (RawKeyPair _ pub) = toB16 $ BA.convert pub
+
+getMaterialSignFuncs :: KeyMaterial -> Map Text (ByteString -> ByteString)
+getMaterialSignFuncs (RecoveryPhrase phrase index) =
+  Map.fromList $ map (\i -> (pubKeyToText $ snd $ genPairFromPhrase phrase i, signWithMaterial (RecoveryPhrase phrase i))) [0..index]
+getMaterialSignFuncs mat@(RawKeyPair _ pub) = Map.singleton (toB16 $ BA.convert pub) (signWithMaterial mat)

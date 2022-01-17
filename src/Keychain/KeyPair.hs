@@ -20,6 +20,9 @@ newtype Signature = Signature Crypto.XSignature
 sigToText :: Signature -> Text
 sigToText (Signature sig) = toB16 $ Crypto.unXSignature sig
 
+sigBytes :: Signature -> ByteString
+sigBytes (Signature sig) = Crypto.unXSignature sig
+
 toSignature :: ByteString -> Either String Signature
 toSignature = fmap Signature . Crypto.xsignature
 

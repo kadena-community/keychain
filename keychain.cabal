@@ -73,5 +73,10 @@ executable keychain
     microlens,
     microlens-aeson,
     microlens-th           >= 0.4.3 && < 0.5,
+    mtl,
     optparse-applicative   >= 0.16.1 && < 0.17,
-    text
+    snap-core,
+    snap-server,
+    text,
+    unordered-containers,
+    vector
