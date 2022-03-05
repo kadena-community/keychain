@@ -160,12 +160,13 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
             die $ T.unpack $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
           Right msg -> do
             let pub = getMaterialPublic material
-                sig = signWithMaterial material msg
+                sigBS = signWithMaterial material msg
+                sigHex = encodeBase16 sigBS
             esig <- case enc of
               Yaml -> do
                 let res = do
                       v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
-                      pure (v & key "sigs" . key pub .~ String (decodeUtf8 sig))
+                      pure (v & key "sigs" . key pub .~ String sigHex)
                     encScalar s@(Y.SStr t) = case T.find (== '"') t of
                       Just _ -> Right (Y.untagged, Y.SingleQuoted, t)
                       Nothing -> Y.schemaEncoderScalar Y.coreSchemaEncoder s
@@ -175,7 +176,7 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
                   Right v -> pure $ Right $ decodeUtf8 $ LB.toStrict $ YA.encodeValue' senc Y.UTF8 [v]
                   Left e -> pure $ Left $ T.unpack e
               _ -> do
-                pure $ Right $ pub <> ": " <> decodeUtf8 sig
+                pure $ Right $ pub <> ": " <> sigHex
             either die T.putStrLn esig
   KeychainSubCommand_ValidateYaml yamlfile -> do
     bs <- B.readFile yamlfile
