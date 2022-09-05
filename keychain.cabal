@@ -66,6 +66,7 @@ executable keychain
     base16,
     base64,
     bytestring,
+    cardano-crypto,
     containers,
     cryptonite,
     keychain,

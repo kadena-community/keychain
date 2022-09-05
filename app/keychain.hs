@@ -10,6 +10,8 @@ import Lens.Micro
 import Lens.Micro.TH
 
 import qualified Crypto.Hash as Crypto
+import qualified Crypto.Encoding.BIP39 as Crypto
+import qualified Crypto.Encoding.BIP39.English as Crypto
 import Data.Aeson (Value(..))
 import Data.Bifunctor
 import qualified Data.ByteArray as BA
@@ -106,6 +108,8 @@ data KeychainSubCommand =
   | KeychainSubCommand_ValidateYaml FilePath
   | KeychainSubCommand_Verify PublicKey Signature Encoding
   | KeychainSubCommand_ListKeys KeyFile KeyIndex
+  | KeychainSubCommand_MnemToEntropy
+  | KeychainSubCommand_EntropyToMnem
   deriving (Eq, Show)
 
 makeLenses ''KeychainSubCommand
@@ -133,7 +137,6 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
     case mkeymaterial of
       Nothing -> die $ "Error reading key material from " <> keyfile
       Just material -> do
-        hPutStrLn stderr $ T.unpack $ "Decoding with " <> encodingToText enc
         rawbs <- readAsEncoding enc
         let ebs = genericDecode enc rawbs
         case ebs of
@@ -178,6 +181,28 @@ runKeychain cmd = case cmd ^. keychainCommand_subCommand of
         getAndShow n = tshow (unKeyIndex n) <> ": " <> pubKeyToText (snd $ generateCryptoPairFromRoot root "" n)
     mapM_ (T.putStrLn . getAndShow) [0..index]
 
+  -- For debugging purposes
+  KeychainSubCommand_EntropyToMnem -> do
+    input <- T.strip <$> T.getContents
+    let eres = do
+          bs <- first T.unpack $ decodeBase16 $ encodeUtf8 input
+          entropy :: Crypto.Entropy 128 <- first show $ Crypto.toEntropy bs
+          let ws = Crypto.entropyToWords entropy
+          pure $ baToText $ Crypto.mnemonicSentenceToString Crypto.english ws
+    case eres of
+      Left e -> error e
+      Right t -> T.putStrLn t
+  KeychainSubCommand_MnemToEntropy -> do
+    input <- T.getContents
+    case Crypto.mnemonicPhrase $ map textTo $ T.words $ T.strip input of
+      Left e -> error $ show e
+      Right phrase ->
+        case Crypto.mnemonicPhraseToMnemonicSentence Crypto.english phrase of
+          Left e -> error $ show e
+          Right ms ->
+            case Crypto.wordsToEntropy ms of
+              Left e -> print e
+              Right (entropy :: Crypto.Entropy 128) -> T.putStrLn $ encodeBase16 $ Crypto.entropyRaw entropy
 
 keychainOpts :: ParserInfo KeychainCommand
 keychainOpts = info (keychainParser <**> helper)
@@ -197,6 +222,8 @@ keychainSubCmdParser = hsubparser $
   <> command "validate-yaml" (info validateParser $ progDesc "Validate the hash of a yaml transaction")
   <> command "verify" (info verifySignature $ progDesc "Verify a signature")
   <> command "list" (info listKeys $ progDesc "List an HD recovery phrase's public keys")
+  <> command "e2m" (info (pure KeychainSubCommand_EntropyToMnem) $ progDesc "Convert entropy (hex) to a mnemonic")
+  <> command "m2e" (info (pure KeychainSubCommand_MnemToEntropy) $ progDesc "Convert a mnenomic to entropy (hex)")
   )
 
 generatePhraseCmd :: Parser KeychainSubCommand
