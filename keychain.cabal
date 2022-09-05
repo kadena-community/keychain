@@ -69,6 +69,7 @@ executable keychain
     cardano-crypto,
     containers,
     cryptonite,
+    echo,
     keychain,
     memory,
     microlens,

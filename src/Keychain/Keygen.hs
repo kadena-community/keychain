@@ -33,10 +33,11 @@ import qualified Data.Text.IO as T
 import Data.Word (Word32)
 import qualified Data.YAML.Aeson as YA
 import GHC.Natural
-import Lens.Micro
-import Lens.Micro.Aeson
 import Keychain.KeyPair
 import Keychain.Utils
+import Lens.Micro
+import Lens.Micro.Aeson
+import System.IO
 
 mnemonicToRoot :: MnemonicPhrase -> Crypto.XPrv
 mnemonicToRoot phrase = seedToRoot (phraseToSeed phrase) "" -- TODO: Empty passowrd
@@ -116,9 +117,9 @@ data KeyMaterial
   | RawKeyPair ED25519.SecretKey ED25519.PublicKey
   deriving (Eq,Show)
 
-readKeyMaterial :: FilePath -> Maybe KeyIndex -> IO (Maybe KeyMaterial)
-readKeyMaterial keyfile mindex = do
-  t <- T.strip <$> T.readFile keyfile
+readKeyMaterial :: Handle -> Maybe KeyIndex -> IO (Maybe KeyMaterial)
+readKeyMaterial h mindex = do
+  t <- T.strip <$> T.hGetContents h
   let res = case mindex of
         Nothing -> do
           v :: Value <- hush $ YA.decode1Strict $ T.encodeUtf8 t

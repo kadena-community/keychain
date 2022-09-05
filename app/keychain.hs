@@ -9,6 +9,7 @@ import Options.Applicative
 import Lens.Micro
 import Lens.Micro.TH
 
+import Control.Monad
 import qualified Crypto.Hash as Crypto
 import qualified Crypto.Encoding.BIP39 as Crypto
 import qualified Crypto.Encoding.BIP39.English as Crypto
@@ -36,14 +37,19 @@ import Data.Word
 import Lens.Micro.Aeson
 import System.Exit
 import System.IO
+import System.IO.Echo
 
 data KeychainCommand = KeychainCommand
   { _keychainCommand_subCommand :: KeychainSubCommand
+  , _keychainCommand_quiet :: Bool
   -- , _keychainCommand_keyStore :: FilePath
   }
   deriving (Eq, Show)
 
-type KeyFile = FilePath
+newtype MsgFile = MsgFile { unMsgFile :: FilePath }
+  deriving (Eq,Ord,Show)
+newtype KeyFile = KeyFile { unKeyFile :: FilePath }
+  deriving (Eq,Ord,Show)
 
 data Encoding = Raw | B16 | B64 | B64Url | Yaml
   deriving (Eq,Ord,Show,Read)
@@ -91,9 +97,9 @@ decodeYamlBS bs = do
                , "PROCEED WITH GREAT CAUTION!!!"
                ]
 
-readAsEncoding :: Encoding -> IO ByteString
-readAsEncoding enc = do
-  bs <- B.hGetContents stdin
+readAsEncoding :: Encoding -> Handle -> IO ByteString
+readAsEncoding enc h = do
+  bs <- B.hGetContents h
   let trimmer :: Word8 -> Bool
       trimmer w = case enc of
                     Raw -> False
@@ -104,105 +110,110 @@ data KeychainSubCommand =
     KeychainSubCommand_GenSeedPhrase
   -- TODO: MAKE INDEX OPTION, DEFAULT TO 0
   | KeychainSubCommand_GetKeypair KeyFile KeyIndex
-  | KeychainSubCommand_Sign KeyFile (Maybe KeyIndex) Encoding
+  | KeychainSubCommand_Sign MsgFile KeyFile (Maybe KeyIndex) Encoding
   | KeychainSubCommand_ValidateYaml FilePath
-  | KeychainSubCommand_Verify PublicKey Signature Encoding
+  | KeychainSubCommand_Verify MsgFile PublicKey Signature Encoding
   | KeychainSubCommand_ListKeys KeyFile KeyIndex
   | KeychainSubCommand_MnemToEntropy
   | KeychainSubCommand_EntropyToMnem
   deriving (Eq, Show)
 
 makeLenses ''KeychainSubCommand
-makeLenses ''KeychainCommand
 
 runKeychain :: KeychainCommand -> IO ()
-runKeychain cmd = case cmd ^. keychainCommand_subCommand of
-  KeychainSubCommand_GenSeedPhrase -> do
-    --TODO: write to file option
-    let toPhrase = T.unwords . Map.elems . mkPhraseMapFromMnemonic
-    let prettyErr e = "ERROR generating menmonic: " <> tshow e
-    res <- either prettyErr toPhrase <$> genMnemonic12
-    T.putStrLn res
-  KeychainSubCommand_GetKeypair keyfile idx -> do
-    Just phrase <- readPhraseFromFile keyfile
-    let root = mnemonicToRoot phrase
-        (xPrv, pub) = generateCryptoPairFromRoot root "" idx
-    T.putStrLn $ T.unlines $
-     [ "Index: " <> tshow idx
-     , "Public Key: " <> pubKeyToText pub
-     , "Encrypted private key: " <> encryptedPrivateKeyToText xPrv
-     ]
-  KeychainSubCommand_Sign keyfile index enc -> do
-    mkeymaterial <- readKeyMaterial keyfile index
-    case mkeymaterial of
-      Nothing -> die $ "Error reading key material from " <> keyfile
-      Just material -> do
-        rawbs <- readAsEncoding enc
-        let ebs = genericDecode enc rawbs
-        case ebs of
-          Left e -> do
-            die $ T.unpack $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
-          Right msg -> do
-            let pub = getMaterialPublic material
-                sig = signWithMaterial material msg
-            case enc of
-              Yaml -> do
-                let res = do
-                      v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
-                      pure (v & key "sigs" . key pub .~ String (decodeUtf8 sig))
-                    encScalar s@(Y.SStr t) = case T.find (== '"') t of
-                      Just _ -> Right (Y.untagged, Y.SingleQuoted, t)
-                      Nothing -> Y.schemaEncoderScalar Y.coreSchemaEncoder s
-                    encScalar s = Y.schemaEncoderScalar Y.coreSchemaEncoder s
-                    senc = Y.setScalarStyle encScalar Y.coreSchemaEncoder
-                case res of
-                  Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
-                  Left e -> die $ T.unpack e
-              _ -> do
-                T.putStrLn $ pub <> ": " <> decodeUtf8 sig
-  KeychainSubCommand_ValidateYaml yamlfile -> do
-    bs <- B.readFile yamlfile
-    case decodeYamlBS bs of
-      Left e -> do
-        putStrLn $ "There was a problem with tx yaml file " <> yamlfile
-        T.putStrLn e
-      Right _ -> putStrLn "Your tx yaml passes basic consistency checks"
-  KeychainSubCommand_Verify pubkey signature enc -> do
-    rawbs <- readAsEncoding enc
-    let emsg = genericDecode enc rawbs
-    case emsg of
-      Left e ->
-        T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
-      Right msg ->
-        T.putStrLn $ "Verify: " <> (tshow $ verify pubkey signature msg)
-  KeychainSubCommand_ListKeys keyfile index -> do
-    Just phrase <- readPhraseFromFile keyfile
-    let root = mnemonicToRoot phrase
-        getAndShow n = tshow (unKeyIndex n) <> ": " <> pubKeyToText (snd $ generateCryptoPairFromRoot root "" n)
-    mapM_ (T.putStrLn . getAndShow) [0..index]
+runKeychain cmd = do
+  when (_keychainCommand_quiet cmd) $ setInputEchoState echoOff
+  case _keychainCommand_subCommand cmd of
+    KeychainSubCommand_GenSeedPhrase -> do
+      --TODO: write to file option
+      let toPhrase = T.unwords . Map.elems . mkPhraseMapFromMnemonic
+      let prettyErr e = "ERROR generating menmonic: " <> tshow e
+      res <- either prettyErr toPhrase <$> genMnemonic12
+      T.putStrLn res
+    KeychainSubCommand_GetKeypair (KeyFile keyfile) idx -> do
+      Just phrase <- readPhraseFromFile keyfile
+      let root = mnemonicToRoot phrase
+          (xPrv, pub) = generateCryptoPairFromRoot root "" idx
+      T.putStrLn $ T.unlines $
+       [ "Index: " <> tshow idx
+       , "Public Key: " <> pubKeyToText pub
+       , "Encrypted private key: " <> encryptedPrivateKeyToText xPrv
+       ]
+    KeychainSubCommand_Sign (MsgFile msgfile) (KeyFile keyfile) index enc -> do
+      when (msgfile == "-" && keyfile == "-") $ error "Can't read multiple files from stdin"
+      mh <- fileOrStdin msgfile
+      kh <- fileOrStdin keyfile
+      mkeymaterial <- readKeyMaterial kh index
+      case mkeymaterial of
+        Nothing -> die $ "Error reading key material from " <> keyfile
+        Just material -> do
+          rawbs <- readAsEncoding enc mh
+          let ebs = genericDecode enc rawbs
+          case ebs of
+            Left e -> do
+              die $ T.unpack $ "Error decoding stdin as " <> encodingToText enc <> ":\n" <> e
+            Right msg -> do
+              let pub = getMaterialPublic material
+                  sig = signWithMaterial material msg
+              case enc of
+                Yaml -> do
+                  let res = do
+                        v :: Value <- first  (T.pack . snd) $ YA.decode1Strict rawbs
+                        pure (v & key "sigs" . key pub .~ String (decodeUtf8 sig))
+                      encScalar s@(Y.SStr t) = case T.find (== '"') t of
+                        Just _ -> Right (Y.untagged, Y.SingleQuoted, t)
+                        Nothing -> Y.schemaEncoderScalar Y.coreSchemaEncoder s
+                      encScalar s = Y.schemaEncoderScalar Y.coreSchemaEncoder s
+                      senc = Y.setScalarStyle encScalar Y.coreSchemaEncoder
+                  case res of
+                    Right v -> LB.putStrLn $ YA.encodeValue' senc Y.UTF8 [v]
+                    Left e -> die $ T.unpack e
+                _ -> do
+                  T.putStrLn $ pub <> ": " <> decodeUtf8 sig
+    KeychainSubCommand_ValidateYaml yamlfile -> do
+      bs <- B.readFile yamlfile
+      case decodeYamlBS bs of
+        Left e -> do
+          putStrLn $ "There was a problem with tx yaml file " <> yamlfile
+          T.putStrLn e
+        Right _ -> putStrLn "Your tx yaml passes basic consistency checks"
+    KeychainSubCommand_Verify (MsgFile msgfile) pubkey signature enc -> do
+      mh <- fileOrStdin msgfile
+      rawbs <- readAsEncoding enc mh
+      let emsg = genericDecode enc rawbs
+      case emsg of
+        Left e ->
+          T.putStrLn $ "Error decoding stdin as " <> encodingToText enc <> ": " <> e
+        Right msg ->
+          T.putStrLn $ "Verify: " <> (tshow $ verify pubkey signature msg)
+    KeychainSubCommand_ListKeys (KeyFile keyfile) index -> do
+      Just phrase <- readPhraseFromFile keyfile
+      let root = mnemonicToRoot phrase
+          getAndShow n = tshow (unKeyIndex n) <> ": " <> pubKeyToText (snd $ generateCryptoPairFromRoot root "" n)
+      mapM_ (T.putStrLn . getAndShow) [0..index]
 
-  -- For debugging purposes
-  KeychainSubCommand_EntropyToMnem -> do
-    input <- T.strip <$> T.getContents
-    let eres = do
-          bs <- first T.unpack $ decodeBase16 $ encodeUtf8 input
-          entropy :: Crypto.Entropy 128 <- first show $ Crypto.toEntropy bs
-          let ws = Crypto.entropyToWords entropy
-          pure $ baToText $ Crypto.mnemonicSentenceToString Crypto.english ws
-    case eres of
-      Left e -> error e
-      Right t -> T.putStrLn t
-  KeychainSubCommand_MnemToEntropy -> do
-    input <- T.getContents
-    case Crypto.mnemonicPhrase $ map textTo $ T.words $ T.strip input of
-      Left e -> error $ show e
-      Right phrase ->
-        case Crypto.mnemonicPhraseToMnemonicSentence Crypto.english phrase of
-          Left e -> error $ show e
-          Right ms ->
-            case Crypto.wordsToEntropy ms of
-              Left e -> print e
-              Right (entropy :: Crypto.Entropy 128) -> T.putStrLn $ encodeBase16 $ Crypto.entropyRaw entropy
+    -- For debugging purposes
+    KeychainSubCommand_EntropyToMnem -> do
+      input <- T.strip <$> T.getContents
+      let eres = do
+            bs <- first T.unpack $ decodeBase16 $ encodeUtf8 input
+            entropy :: Crypto.Entropy 128 <- first show $ Crypto.toEntropy bs
+            let ws = Crypto.entropyToWords entropy
+            pure $ baToText $ Crypto.mnemonicSentenceToString Crypto.english ws
+      case eres of
+        Left e -> error e
+        Right t -> T.putStrLn t
+    KeychainSubCommand_MnemToEntropy -> do
+      input <- T.getContents
+      case Crypto.mnemonicPhrase $ map textTo $ T.words $ T.strip input of
+        Left e -> error $ show e
+        Right phrase ->
+          case Crypto.mnemonicPhraseToMnemonicSentence Crypto.english phrase of
+            Left e -> error $ show e
+            Right ms ->
+              case Crypto.wordsToEntropy ms of
+                Left e -> print e
+                Right (entropy :: Crypto.Entropy 128) -> T.putStrLn $ encodeBase16 $ Crypto.entropyRaw entropy
 
 keychainOpts :: ParserInfo KeychainCommand
 keychainOpts = info (keychainParser <**> helper)
@@ -213,6 +224,7 @@ keychainOpts = info (keychainParser <**> helper)
 keychainParser :: Parser KeychainCommand
 keychainParser = KeychainCommand
   <$> keychainSubCmdParser
+  <*> switch (long "quiet" <> short 'q' <> help "Quiet mode")
 
 keychainSubCmdParser :: Parser KeychainSubCommand
 keychainSubCmdParser = hsubparser $
@@ -231,7 +243,7 @@ generatePhraseCmd = pure $ KeychainSubCommand_GenSeedPhrase
 
 generateKeyPairFromPhrase :: Parser KeychainSubCommand
 generateKeyPairFromPhrase= KeychainSubCommand_GetKeypair
-  <$> (argument str $ metavar "KEY-FILE" )
+  <$> fmap KeyFile (argument str $ metavar "KEY-FILE")
   <*> (argument keyIndexReader $ metavar "INDEX" )
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)
@@ -242,8 +254,9 @@ encodingOption = option (maybeReader $ textToEncoding . T.pack)
 
 signWithKeyMaterial :: Parser KeychainSubCommand
 signWithKeyMaterial = KeychainSubCommand_Sign
-  <$> (argument str $ metavar "KEY-FILE" )
-  <*> optional (argument keyIndexReader $ metavar "INDEX" )
+  <$> fmap MsgFile (strOption (long "msg" <> short 'm' <> value "-" <> metavar "MSG-FILE" ))
+  <*> fmap KeyFile (strOption (long "key" <> short 'k' <> metavar "KEY-FILE" ))
+  <*> optional (option keyIndexReader $ long "ind" <> short 'i' <> metavar "INDEX" )
   <*> encodingOption
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)
@@ -254,7 +267,8 @@ validateParser = KeychainSubCommand_ValidateYaml
 
 verifySignature :: Parser KeychainSubCommand
 verifySignature = KeychainSubCommand_Verify
-  <$> (argument pubKeyReader $ metavar "PUB-KEY" )
+  <$> fmap MsgFile (strOption (long "msg" <> short 'm' <> metavar "MSG-FILE" ))
+  <*> (argument pubKeyReader $ metavar "PUB-KEY" )
   <*> (argument signatureReader $ metavar "SIGNATURE" )
   <*> encodingOption
   where
@@ -266,7 +280,7 @@ verifySignature = KeychainSubCommand_Verify
 
 listKeys :: Parser KeychainSubCommand
 listKeys = KeychainSubCommand_ListKeys
-  <$> (argument str $ metavar "KEY-FILE" )
+  <$> fmap KeyFile (argument str $ metavar "KEY-FILE" )
   <*> (argument keyIndexReader $ metavar "INDEX" )
   where
     keyIndexReader = maybeReader (fmap KeyIndex . readNatural)

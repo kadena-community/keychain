@@ -10,6 +10,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import GHC.Natural
+import System.IO
 import Text.Read (readMaybe)
 
 tshow :: Show a => a -> Text
@@ -36,3 +37,10 @@ fromB16 txt = B16.decodeBase16 $ T.encodeUtf8 txt
 
 readNatural :: String -> Maybe Natural
 readNatural = readMaybe
+
+fileOrStdin :: FilePath -> IO Handle
+fileOrStdin fp =
+  case fp of
+    "-" -> pure stdin
+    _ -> openFile fp ReadMode
+
