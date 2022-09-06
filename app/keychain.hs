@@ -120,9 +120,11 @@ data KeychainSubCommand =
 
 makeLenses ''KeychainSubCommand
 
+withQuiet :: KeychainCommand -> IO () -> IO ()
+withQuiet cmd = if _keychainCommand_quiet cmd then withoutInputEcho else id
+
 runKeychain :: KeychainCommand -> IO ()
-runKeychain cmd = do
-  when (_keychainCommand_quiet cmd) $ setInputEchoState echoOff
+runKeychain cmd = withQuiet cmd $ do
   case _keychainCommand_subCommand cmd of
     KeychainSubCommand_GenSeedPhrase -> do
       --TODO: write to file option
